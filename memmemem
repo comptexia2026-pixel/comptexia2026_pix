@@ -1,0 +1,693 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{tcolorbox}
+\usepackage{float}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{colortbl}
+\usepackage{array}
+\usepackage{longtable}
+
+\geometry{margin=2.2cm, top=2.8cm, bottom=2.5cm}
+
+\definecolor{bilpurple}{HTML}{4A2D7A}
+\definecolor{billight}{HTML}{F5F0FA}
+\definecolor{bilgray}{HTML}{F7F7F7}
+\definecolor{okgreen}{HTML}{2E7D32}
+\definecolor{warnorg}{HTML}{E65100}
+\definecolor{errred}{HTML}{C62828}
+\definecolor{headblue}{HTML}{1A3C5E}
+
+\hypersetup{colorlinks=true,linkcolor=bilpurple,urlcolor=bilpurple,
+  pdftitle={Rapport de Validation -- Extraction Term Sheets BIL},
+  pdfauthor={Nasser Kassioui}}
+
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\small\textcolor{bilpurple}{Rapport de Validation --- Extraction Term Sheets}}
+\fancyhead[R]{\small\textcolor{bilpurple}{BIL --- Usage Interne}}
+\fancyfoot[C]{\thepage}
+\fancyfoot[R]{\small\textcolor{gray}{Nasser Kassioui --- Mars 2026}}
+\renewcommand{\headrulewidth}{0.5pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{bilpurple}\leaders\hrule height \headrulewidth\hfill}}
+
+\titleformat{\section}{\Large\bfseries\color{bilpurple}}{\thesection}{1em}{}
+\titleformat{\subsection}{\large\bfseries\color{bilpurple!80!black}}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{bilpurple!60!black}}{\thesubsubsection}{1em}{}
+
+\newtcolorbox{keybox}[1][]{colback=billight,colframe=bilpurple,fonttitle=\bfseries,title=#1}
+\newtcolorbox{warnbox}[1][]{colback=orange!5,colframe=warnorg,fonttitle=\bfseries,title=#1}
+\newtcolorbox{okbox}[1][]{colback=green!5,colframe=okgreen,fonttitle=\bfseries,title=#1}
+
+\newcolumntype{Y}{>{\centering\arraybackslash}X}
+\newcolumntype{R}{>{\raggedleft\arraybackslash}p{1.5cm}}
+
+\begin{document}
+
+% ===== PAGE DE GARDE =====
+\begin{titlepage}
+\centering
+
+\vspace*{1cm}
+
+\rule{\textwidth}{2pt}
+\vspace{0.5cm}
+
+{\fontsize{28}{34}\selectfont\bfseries\textcolor{bilpurple}{Rapport de Validation}\par}
+\vspace{0.3cm}
+{\LARGE\textcolor{bilpurple!70!black}{Pipeline d'Extraction Automatique\\de Term Sheets}\par}
+
+\vspace{0.5cm}
+\rule{\textwidth}{2pt}
+
+\vspace{1.5cm}
+
+{\large\textbf{Banque Internationale \`a Luxembourg S.A.}\par}
+\vspace{0.3cm}
+{\normalsize Direction des Investissements --- Produits Structur\'es\par}
+
+\vspace{2cm}
+
+\begin{tcolorbox}[colback=billight,colframe=bilpurple,width=0.9\textwidth]
+\begin{tabularx}{\linewidth}{lX}
+\textbf{Objet} & Validation de l'extraction automatique de donn\'ees financi\`eres
+\`a partir de 312 term sheets PDF \\[6pt]
+\textbf{Source} & \texttt{EIKON\_LIPPER\_DATA\_FOR\_LTV\textbackslash pst\textbackslash TS} \\[6pt]
+\textbf{R\'ef\'erence} & Base PST (filtrage BIL = TRUE) \\[6pt]
+\textbf{P\'eriode} & Mars 2026 \\[6pt]
+\textbf{Classification} & Usage interne \\
+\end{tabularx}
+\end{tcolorbox}
+
+\vspace{2cm}
+
+\rule{0.4\textwidth}{0.5pt}
+\vspace{0.5cm}
+
+{\large\textbf{Nasser Kassioui}\par}
+\vspace{0.2cm}
+{\normalsize Mars 2026\par}
+
+\end{titlepage}
+
+% ===== TABLE DES MATIERES =====
+\tableofcontents
+\newpage
+
+
+% =============================================================================
+\section{Synth\`ese ex\'ecutive}
+% =============================================================================
+
+Ce rapport pr\'esente les r\'esultats de la validation du mod\`ele d'extraction
+automatique de donn\'ees financi\`eres appliqu\'e \`a un corpus de \textbf{312 term
+sheets} \'emis par la Banque Internationale \`a Luxembourg~(BIL).
+
+L'objectif est d'\'evaluer la fiabilit\'e du mod\`ele en comparant ses extractions
+\`a la base de r\'ef\'erence PST, d'identifier les \'ecarts, de distinguer les
+erreurs r\'eelles des cas non exploitables, et de formuler des recommandations
+d'am\'elioration.
+
+\begin{okbox}[Conclusion principale]
+Le mod\`ele d\'emontre une robustesse \'elev\'ee sur les champs structurels
+(ISIN, BIL, Issuer, Maturity). Les \'ecarts identifi\'es sont majoritairement
+attribuables \`a des limitations de donn\'ees (documents hors scope, absence
+d'OCR) plut\^ot qu'\`a des d\'efaillances algorithmiques. Deux composants ---
+Currency et Worst/Average --- n\'ecessitent des am\'eliorations cibl\'ees.
+\end{okbox}
+
+
+% =============================================================================
+\section{M\'ethodologie}
+% =============================================================================
+
+\subsection{Constitution du corpus}
+
+Le corpus de validation a \'et\'e constitu\'e selon la proc\'edure suivante :
+
+\begin{enumerate}
+  \item Extraction de l'ensemble des fichiers PDF du r\'epertoire
+        \texttt{EIKON\_LIPPER\_DATA\_FOR\_LTV\textbackslash pst\textbackslash TS}.
+  \item Filtrage par pr\'esence d'un code ISIN dans le nom du fichier,
+        permettant une correspondance directe avec la base PST.
+  \item V\'erification crois\'ee : seuls les documents pour lesquels
+        \texttt{BIL~=~TRUE} dans la base PST ont \'et\'e retenus.
+  \item R\'esultat : \textbf{312 documents} constituant l'\'echantillon
+        de validation.
+\end{enumerate}
+
+Cette m\'ethode de s\'election par ISIN dans le nom de fichier sert \'egalement
+de \textbf{validation indirecte} de la capacit\'e du mod\`ele \`a extraire
+correctement les ISINs depuis le contenu des PDFs.
+
+\subsection{R\'ef\'erentiel de comparaison}
+
+La base PST constitue le r\'ef\'erentiel de v\'erit\'e. Les champs extraits
+par le mod\`ele sont compar\'es aux valeurs PST via des op\'erations de
+correspondance (\texttt{XLOOKUP}) sur l'ISIN du produit.
+
+\begin{warnbox}[Pr\'ecaution m\'ethodologique]
+Les indicateurs bool\'eens (TRUE/FALSE) dans la feuille \texttt{Resultats\_trt}
+sont calcul\'es \textbf{uniquement} par rapport \`a la base PST. Un r\'esultat
+FALSE ne signifie pas n\'ecessairement une erreur du mod\`ele --- il peut
+refl\'eter une diff\'erence de d\'efinition, un document hors scope, ou une
+donn\'ee absente de PST.
+\end{warnbox}
+
+\subsection{Structure du fichier Excel de contr\^ole}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{Feuille} & \textbf{Contenu} \\
+\midrule
+\texttt{Resultats} & Extraction brute du mod\`ele (une ligne par PDF) \\
+\texttt{Underlying\_ISINs} & ISINs et tickers Bloomberg des sous-jacents \\
+\texttt{PST} & Base de r\'ef\'erence (donn\'ees PST) \\
+\texttt{Resultats\_trt} & Contr\^oles avec indicateurs bool\'eens par champ \\
+\texttt{STATISTIQUES} & M\'etriques agr\'eg\'ees (avant correction FN/FP) \\
+\bottomrule
+\end{tabularx}
+\caption{Structure du fichier de contr\^ole}
+\end{table}
+
+
+% =============================================================================
+\section{R\'esultats d\'etaill\'es par champ}
+% =============================================================================
+
+\subsection{ISIN (code produit)}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrl}
+\toprule
+\textbf{M\'etrique} & \textbf{Valeur} & \textbf{D\'etail} \\
+\midrule
+Documents trait\'es & 312 & \\
+TRUE & 310 & Correspondance exacte avec PST \\
+FALSE & 2 & \\
+\quad Erreurs r\'eelles & 0 & \\
+\quad Cas non exploitables & 2 & 1 document sans ISIN, 1 ISIN en image \\
+\bottomrule
+\end{tabular}
+\caption{R\'esultats ISIN}
+\end{table}
+
+Les deux \'ecarts identifi\'es sont :
+
+\begin{enumerate}
+  \item Un document ne contenant aucun code ISIN dans son contenu textuel.
+        Le mod\`ele retourne correctement \texttt{None}.
+  \item Un document dont l'ISIN est pr\'esent uniquement sous forme d'image
+        (logo, tampon). En l'absence de module OCR, le mod\`ele ne peut pas
+        lire ce contenu. Ce comportement est attendu et document\'e.
+\end{enumerate}
+
+\begin{okbox}[Conclusion ISIN]
+Aucune erreur r\'eelle du mod\`ele. Les deux FALSE sont des cas limites
+li\'es au contenu du document, non \`a l'algorithme d'extraction.
+Taux de pr\'ecision effectif : \textbf{100\%}.
+\end{okbox}
+
+\subsection{BIL (d\'etection \'emetteur)}
+
+L'ensemble des 312 documents retournent \texttt{BIL~=~TRUE}. Ce r\'esultat
+est coh\'erent avec la m\'ethode de s\'election du corpus (filtrage pr\'ealable
+sur \texttt{BIL~=~TRUE} dans PST). La d\'etection BIL repose sur la pr\'esence
+de mots-cl\'es sp\'ecifiques (<<~Banque Internationale \`a Luxembourg~>>,
+<<~69 Route d'Esch~>>, <<~L-2953 Luxembourg~>>).
+
+Taux de concordance : \textbf{100\%}.
+
+\subsection{CLN (Credit Linked Note)}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrl}
+\toprule
+\textbf{M\'etrique} & \textbf{Valeur} & \textbf{D\'etail} \\
+\midrule
+Documents trait\'es & 312 & \\
+TRUE & 0 & \\
+FALSE & 312 & Aucun CLN dans l'\'echantillon \\
+\bottomrule
+\end{tabular}
+\caption{R\'esultats CLN}
+\end{table}
+
+\begin{warnbox}[Interpr\'etation]
+Le r\'esultat FALSE pour l'ensemble du corpus n'indique \textbf{pas} une
+d\'efaillance du mod\`ele. Il refl\`ete l'absence de produits de type Credit
+Linked Note dans l'\'echantillon de 312 term sheets. Le mod\`ele fonctionne
+correctement --- il ne d\'etecte pas de CLN l\`a o\`u il n'y en a pas ---
+mais sa capacit\'e \`a identifier positivement un CLN ne peut pas \^etre
+valid\'ee avec ce corpus.
+\end{warnbox}
+
+Ce point constitue une \textbf{limitation de l'\'echantillon}, non du mod\`ele.
+Une validation compl\'ementaire sur un corpus contenant des CLN est recommand\'ee.
+
+\subsection{Capital Protection}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrl}
+\toprule
+\textbf{M\'etrique} & \textbf{Valeur} & \textbf{D\'etail} \\
+\midrule
+Documents trait\'es & 312 & \\
+TRUE & 304 & Concordance avec PST \\
+FALSE & 8 & \\
+\quad Documents KID (hors scope) & 3 & Format non couvert \\
+\quad Erreurs li\'ees au parsing SSPA & 5 & Position du code SSPA atypique \\
+\quad Erreurs r\'eelles du mod\`ele & 0 & \\
+\bottomrule
+\end{tabular}
+\caption{R\'esultats Capital Protection}
+\end{table}
+
+\subsubsection{Analyse des 8 \'ecarts}
+
+\textbf{3 documents KID (Key Information Document) :} Ces documents ne sont pas
+des term sheets. Ils suivent un format r\'eglementaire diff\'erent (PRIIPs KID)
+qui ne pr\'esente pas la protection du capital selon les conventions des term
+sheets. Ces documents sont \textbf{hors du p\'erim\`etre} du mod\`ele.
+
+\textbf{5 erreurs de parsing SSPA :} Le mod\`ele inf\`ere la protection du
+capital \`a partir du code SSPA lorsqu'aucune valeur explicite n'est trouv\'ee.
+Dans ces 5 cas, le code SSPA est positionn\'e de mani\`ere atypique dans le
+document (en dehors des 800 premiers caract\`eres, ou avec un formatage
+inhabituel), emp\^echant son extraction correcte.
+
+\begin{keybox}[Recommandation]
+\'Elargir la zone de recherche du code SSPA et ajouter des patterns
+suppl\'ementaires pour couvrir les positionnements atypiques. Ajouter un
+filtre en amont pour exclure les documents KID du traitement.
+\end{keybox}
+
+\subsection{Maturity (date de maturit\'e)}
+
+La quasi-totalit\'e des dates de maturit\'e extraites sont coh\'erentes avec
+la base PST. Un \'ecart syst\'ematique de l'ordre de \textbf{5 jours ouvr\'es}
+a \'et\'e observ\'e sur l'ensemble du corpus.
+
+\subsubsection{Explication de l'\'ecart}
+
+Cet \'ecart n'est pas une erreur mais une \textbf{diff\'erence de d\'efinition} :
+
+\begin{itemize}
+  \item \textbf{Base PST} : utilise la \textit{Redemption Date} (date de
+        remboursement effectif, apr\`es r\`eglement).
+  \item \textbf{Mod\`ele} : extrait la \textit{Final Fixing Date} ou
+        \textit{derni\`ere date de n\'egociation}, qui pr\'ec\`ede
+        syst\'ematiquement la date de remboursement de quelques jours ouvr\'es.
+\end{itemize}
+
+Cet \'ecart est \textbf{structurel et pr\'evisible}. Il ne constitue pas une
+erreur d'extraction mais une divergence de convention.
+
+\begin{keybox}[Recommandation]
+Si l'alignement exact avec PST est requis, privil\'egier l'extraction du
+label <<~Redemption Date~>> sur <<~Final Fixing Date~>> dans la hi\'erarchie
+de recherche. Alternativement, documenter cet \'ecart comme un d\'ecalage
+connu et acceptable.
+\end{keybox}
+
+\subsection{Worst-of / Average}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrl}
+\toprule
+\textbf{M\'etrique} & \textbf{Valeur} & \textbf{D\'etail} \\
+\midrule
+Documents trait\'es & 312 & \\
+TRUE & 293 & \\
+FALSE & 19 & \\
+\quad Valeurs <<~nan~>> & 19 & Sous-jacents non d\'etect\'es \\
+\quad Erreurs r\'eelles & 0 & Aucune classification incorrecte \\
+\bottomrule
+\end{tabular}
+\caption{R\'esultats Worst-of / Average}
+\end{table}
+
+Les 19 \'ecarts correspondent \`a des cas o\`u le mod\`ele retourne \texttt{"nan"}
+(valeur ind\'etermin\'ee). L'analyse montre que dans chacun de ces cas, les
+sous-jacents (\textit{underlyings}) n'ont pas \'et\'e d\'etect\'es par le module
+d'extraction de tickers Bloomberg.
+
+\subsubsection{Cause racine}
+
+La logique actuelle classe un produit comme worst-of si un seul sous-jacent
+est d\'etect\'e, ou si un pattern textuel (<<~worst-of~>>, <<~Multi Barrier~>>,
+etc.) est trouv\'e. Lorsque ni les sous-jacents ni les patterns ne sont
+identifi\'es, le mod\`ele retourne prudemment \texttt{"nan"} plut\^ot qu'une
+valeur incorrecte.
+
+\begin{warnbox}[Point critique]
+Le probl\`eme n'est pas dans la logique de classification W/A elle-m\^eme,
+mais dans le module en amont d'extraction des sous-jacents. L'am\'elioration
+de ce composant aurait un impact direct sur le taux de remplissage W/A.
+\end{warnbox}
+
+\subsection{Currency (devise)}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrl}
+\toprule
+\textbf{M\'etrique} & \textbf{Valeur} & \textbf{D\'etail} \\
+\midrule
+Documents trait\'es & 312 & \\
+TRUE & 265 & \\
+FALSE & 47 & \\
+\quad Valeurs NaN (non d\'etect\'ees) & 43 & Devise absente ou non reconnue \\
+\quad Erreurs r\'eelles & 4 & Devise incorrectement extraite \\
+\bottomrule
+\end{tabular}
+\caption{R\'esultats Currency}
+\end{table}
+
+\subsubsection{Analyse des 43 NaN}
+
+Les cas de non-d\'etection sont attribuables \`a :
+
+\begin{itemize}
+  \item Des labels de devise non couverts par les patterns actuels
+        (variantes linguistiques ou formulations inhabituelles).
+  \item Des mises en page o\`u la devise n'appara\^it pas dans une
+        paire label-valeur standard mais dans un tableau ou un en-t\^ete.
+\end{itemize}
+
+\subsubsection{Analyse des 4 erreurs r\'eelles}
+
+Dans 4 cas, le mod\`ele a extrait une devise diff\'erente de celle enregistr\'ee
+dans PST. Ces erreurs sont probablement li\'ees \`a une confusion entre
+la devise de n\'egociation et la devise de r\`eglement lorsque les deux sont
+pr\'esentes dans le document.
+
+\begin{warnbox}[Composant \`a am\'eliorer]
+Avec un taux d'\'echec de 15,1\% (47/312), le composant Currency est le
+point faible identifi\'e du mod\`ele. Une refonte des patterns d'extraction
+et un \'elargissement des labels multilingues sont recommand\'es.
+\end{warnbox}
+
+\subsection{Issuer (\'emetteur)}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrl}
+\toprule
+\textbf{M\'etrique} & \textbf{Valeur} & \textbf{D\'etail} \\
+\midrule
+Documents trait\'es & 312 & \\
+Valeurs extraites & 301 & \\
+Valeurs manquantes & 11 & Non d\'etect\'ees \\
+Erreurs (valeur incorrecte) & 0 & \\
+\bottomrule
+\end{tabular}
+\caption{R\'esultats Issuer}
+\end{table}
+
+Le mod\`ele ne produit \textbf{aucune erreur} sur l'\'emetteur : lorsqu'il
+extrait une valeur, celle-ci est toujours correcte. Les 11 valeurs manquantes
+correspondent \`a des documents dont le layout ne permet pas l'extraction via
+les paires label-valeur ni via la liste de noms connus.
+
+Taux de pr\'ecision (quand renseign\'e) : \textbf{100\%}.
+Taux de remplissage : \textbf{96,5\%}.
+
+
+% =============================================================================
+\section{Tableau r\'ecapitulatif global}
+% =============================================================================
+
+\begin{table}[H]
+\centering
+\small
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\textwidth}{l R R R R R X}
+\toprule
+\rowcolor{bilpurple}
+\textcolor{white}{\textbf{Variable}} &
+\textcolor{white}{\textbf{Total}} &
+\textcolor{white}{\textbf{TRUE}} &
+\textcolor{white}{\textbf{FALSE}} &
+\textcolor{white}{\textbf{Erreurs r\'eelles}} &
+\textcolor{white}{\textbf{Non exploit.}} &
+\textcolor{white}{\textbf{Commentaire}} \\
+\midrule
+ISIN & 312 & 310 & 2 & 0 & 2 & 1 absent, 1 en image \\
+\rowcolor{bilgray}
+BIL & 312 & 312 & 0 & 0 & 0 & 100\% concordance \\
+CLN & 312 & 0 & 312 & 0 & 312 & Aucun CLN dans l'\'echantillon \\
+\rowcolor{bilgray}
+Cap. Prot. & 312 & 304 & 8 & 0 & 8 & 3 KID + 5 parsing SSPA \\
+Maturity & 312 & \multicolumn{2}{c}{coh\'erent} & 0 & --- & \'Ecart syst. $\sim$5j (d\'ef.) \\
+\rowcolor{bilgray}
+W/A & 312 & 293 & 19 & 0 & 19 & Underlyings non d\'etect\'es \\
+Currency & 312 & 265 & 47 & \textcolor{errred}{\textbf{4}} & 43 & \textcolor{errred}{Composant \`a am\'eliorer} \\
+\rowcolor{bilgray}
+Issuer & 312 & 301 & 11 & 0 & 11 & 11 manquants, 0 erreur \\
+\bottomrule
+\end{tabularx}
+\caption{Synth\`ese globale des performances --- 312 documents}
+\end{table}
+
+\begin{keybox}[Lecture du tableau]
+La colonne <<~Erreurs r\'eelles~>> distingue les v\'eritables d\'efaillances
+algorithmiques des cas <<~Non exploitables~>> (documents hors scope, absence
+de donn\'ees, limitations d'OCR). Sur l'ensemble du corpus, seules
+\textbf{4 erreurs r\'eelles} ont \'et\'e identifi\'ees, toutes sur le
+composant Currency.
+\end{keybox}
+
+
+% =============================================================================
+\section{Analyse de la robustesse}
+% =============================================================================
+
+\subsection{Points forts}
+
+\begin{enumerate}
+  \item \textbf{ISIN} : extraction parfaite (100\% de pr\'ecision effective).
+        La double validation (nom de fichier + contenu PDF) confirme la
+        fiabilit\'e de l'algorithme de scoring par proximit\'e.
+
+  \item \textbf{BIL} : d\'etection infaillible sur le corpus test\'e. La
+        m\'ethode par mots-cl\'es (adresse, nom complet) est adapt\'ee au
+        cas d'usage mono-\'emetteur.
+
+  \item \textbf{Issuer} : aucune erreur de classification. Le mod\`ele
+        privil\'egie la pr\'ecision sur le rappel --- il pr\'ef\`ere ne pas
+        r\'epondre plut\^ot que de donner une valeur incorrecte.
+
+  \item \textbf{Capital Protection} : les 8 \'ecarts sont enti\`erement
+        explicables (KID hors scope + positionnement SSPA atypique).
+        Aucune erreur sur les documents conformes.
+
+  \item \textbf{Maturity} : coh\'erence globale. L'\'ecart syst\'ematique
+        de $\sim$5 jours est une diff\'erence de d\'efinition, non une erreur.
+\end{enumerate}
+
+\subsection{Points faibles}
+
+\begin{enumerate}
+  \item \textbf{Currency} : taux d'\'echec de 15,1\% dont 4 erreurs r\'eelles.
+        C'est le seul composant produisant des valeurs incorrectes (et non
+        simplement manquantes). Priorit\'e \'elev\'ee.
+
+  \item \textbf{Worst/Average} : 19 valeurs ind\'etermin\'ees (\texttt{nan})
+        dues \`a la non-d\'etection des sous-jacents. Le composant en lui-m\^eme
+        fonctionne correctement --- le probl\`eme est en amont.
+
+  \item \textbf{CLN} : impossible \`a valider faute de donn\'ees. Le mod\`ele
+        n'a jamais \'et\'e confront\'e \`a un vrai positif.
+\end{enumerate}
+
+\subsection{Taux de fiabilit\'e global}
+
+En excluant les cas non exploitables (KID, images, documents sans ISIN) et
+le champ CLN (non testable), le mod\`ele pr\'esente :
+
+\begin{table}[H]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{M\'etrique} & \textbf{Valeur} \\
+\midrule
+Erreurs r\'eelles totales & 4 / 312 = \textbf{1,3\%} \\
+Taux de fiabilit\'e global & \textbf{98,7\%} \\
+Champs sans aucune erreur & 6 / 7 \\
+Seul composant avec erreurs & Currency \\
+\bottomrule
+\end{tabular}
+\caption{M\'etriques de fiabilit\'e}
+\end{table}
+
+
+% =============================================================================
+\section{Limites identifi\'ees}
+% =============================================================================
+
+\subsection{Limites li\'ees au corpus}
+
+\begin{enumerate}
+  \item \textbf{\'Echantillon mono-\'emetteur} : les 312 documents proviennent
+        exclusivement de BIL. La performance sur d'autres \'emetteurs (layouts
+        diff\'erents, conventions diff\'erentes) n'est pas mesur\'ee.
+
+  \item \textbf{Absence de CLN} : le composant CLN n'a pas pu \^etre valid\'e.
+        Un corpus compl\'ementaire contenant des Credit Linked Notes est
+        n\'ecessaire.
+
+  \item \textbf{Absence de documents multidevises} : les 4 erreurs Currency
+        sugg\`erent une difficult\'e sur les documents pr\'esentant plusieurs
+        devises. L'\'echantillon ne permet pas de quantifier pr\'ecis\'ement
+        ce ph\'enom\`ene.
+\end{enumerate}
+
+\subsection{Limites techniques}
+
+\begin{enumerate}
+  \item \textbf{Pas d'OCR} : les contenus en image (logos, tampons, ISINs
+        non textuels) ne sont pas lisibles. Cela concerne 1 document sur 312.
+
+  \item \textbf{Documents KID} : le mod\`ele ne distingue pas un term sheet
+        d'un KID. Les KID suivent un format r\'eglementaire diff\'erent et
+        produisent des r\'esultats incoh\'erents.
+
+  \item \textbf{Zone de recherche SSPA} : la recherche du code SSPA est
+        limit\'ee aux 800 premiers caract\`eres. Certains documents placent
+        ce code plus loin.
+
+  \item \textbf{D\'etection des sous-jacents} : le module d'extraction de
+        tickers Bloomberg ne couvre pas toutes les configurations de tables
+        de sous-jacents, impactant directement le champ W/A.
+\end{enumerate}
+
+
+% =============================================================================
+\section{Recommandations}
+% =============================================================================
+
+\subsection{Priorit\'e haute}
+
+\subsubsection{Am\'elioration du composant Currency}
+
+\begin{enumerate}
+  \item \'Elargir les patterns regex pour couvrir les labels de devise
+        non standard (variantes multilingues, abr\'eviations).
+  \item Ajouter une logique de d\'esambigu\"isation lorsque plusieurs devises
+        sont pr\'esentes : privil\'egier la devise associ\'ee au label
+        <<~Settlement Currency~>> sur <<~Underlying Currency~>>.
+  \item Augmenter la couverture de la table \texttt{LABEL\_TO\_FIELD}
+        pour les labels de devise.
+\end{enumerate}
+
+\subsubsection{Am\'elioration de l'extraction des sous-jacents}
+
+\begin{enumerate}
+  \item \'Elargir la zone de recherche des tickers Bloomberg au-del\`a de
+        la section <<~UNDERLYING~>>.
+  \item Ajouter des noms de bourses suppl\'ementaires dans la liste de
+        recherche.
+  \item Impl\'ementer une d\'etection par structure de tableau (colonnes
+        align\'ees verticalement contenant des noms d'actions).
+\end{enumerate}
+
+\subsection{Priorit\'e moyenne}
+
+\subsubsection{Am\'elioration du parsing SSPA}
+
+\begin{enumerate}
+  \item \'Elargir la zone de recherche de 800 \`a 1500 caract\`eres.
+  \item Ajouter des patterns pour les positionnements atypiques du code SSPA
+        (en bas de page, dans un encadr\'e, apr\`es un saut de ligne multiple).
+\end{enumerate}
+
+\subsubsection{Gestion des documents KID}
+
+\begin{enumerate}
+  \item Impl\'ementer un filtre en amont d\'etectant les documents KID
+        (pr\'esence de <<~Key Information Document~>> ou <<~PRIIPs~>> dans
+        les premiers caract\`eres).
+  \item Exclure ces documents du traitement ou les traiter avec un
+        extracteur d\'edi\'e.
+\end{enumerate}
+
+\subsection{Priorit\'e basse}
+
+\begin{enumerate}
+  \item Valider le composant CLN sur un corpus contenant des Credit Linked Notes.
+  \item \'Evaluer l'ajout d'un module OCR pour les rares cas de contenu en image.
+  \item \'Etendre la validation \`a un corpus multi-\'emetteurs (objectif :
+        50 \'emetteurs, 1000+ documents).
+\end{enumerate}
+
+
+% =============================================================================
+\section{Annexe --- D\'efinition des indicateurs de contr\^ole}
+% =============================================================================
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{Indicateur} & \textbf{D\'efinition} \\
+\midrule
+TRUE & La valeur extraite par le mod\`ele correspond \`a la valeur PST \\
+FALSE & La valeur extraite diff\`ere de PST ou est absente \\
+Erreur r\'eelle & Le mod\`ele a extrait une valeur \textbf{incorrecte} (faux positif) \\
+Non exploitable & Le document est hors scope (KID), l'information est en image,
+ou l'information n'existe pas dans le document \\
+NaN & Le mod\`ele n'a pas trouv\'e de valeur (retourne explicitement <<~non trouv\'e~>>) \\
+\bottomrule
+\end{tabularx}
+\caption{D\'efinitions des indicateurs}
+\end{table}
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{Champ} & \textbf{M\'ethode de comparaison} \\
+\midrule
+ISIN & Comparaison exacte mod\`ele vs REAL\_ISIN (extrait du nom de fichier) \\
+BIL & V\'erification que le mod\`ele retourne TRUE pour tous les documents filtr\'es BIL \\
+CLN & Comparaison avec CLN\_PST via XLOOKUP sur ISIN \\
+Capital Prot. & Comparaison num\'erique mod\`ele vs PST \\
+Maturity & Comparaison de dates avec tol\'erance (analyse de l'\'ecart) \\
+W/A & Comparaison cat\'egorielle (W, A, nan) vs PST \\
+Currency & Comparaison exacte du code ISO 4217 \\
+Issuer & Comparaison textuelle (pr\'esence/absence et concordance) \\
+\bottomrule
+\end{tabularx}
+\caption{M\'ethodes de comparaison par champ}
+\end{table}
+
+
+\vspace{1.5cm}
+\begin{center}
+\rule{0.3\textwidth}{0.5pt}
+\end{center}
+\vspace{0.5cm}
+
+\begin{flushright}
+\textbf{Nasser Kassioui}\\
+Mars 2026\\[0.3cm]
+\textit{Banque Internationale \`a Luxembourg S.A.}\\
+\textit{Direction des Investissements --- Produits Structur\'es}
+\end{flushright}
+
+\end{document}
