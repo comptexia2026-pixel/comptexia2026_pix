@@ -1,0 +1,434 @@
+# modules/table_detector.py
+#
+# Detects and classifies tables in PDF documents using spatial clustering
+# of word coordinates. Uses the output of coord_extractor (words, lines).
+#
+# Algorithm based on:
+#   1. Column signature per line (quantified x0 positions)
+#   2. Soft intersection between consecutive lines
+#   3. Contiguous zone detection
+#   4. Noise filtering (variance of cell widths)
+#   5. Type classification (label-value, dates, underlying, etc.)
+#   6. Cell extraction into a matrix
+#
+# Usage:
+#   from modules.coord_extractor import extract_from_pdf
+#   from modules.table_detector import detect_tables
+#
+#   result = extract_from_pdf("file.pdf")
+#   tables = detect_tables(result.lines, result.words)
+#   for table in tables:
+#       print(table)
+
+import re
+import logging
+from dataclasses import dataclass, field
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# =====================================================================
+# Parameters (from the mathematical formalization)
+# =====================================================================
+
+BIN_SIZE = 5            # b : quantification resolution (pt)
+ALIGN_TOLERANCE = 8     # epsilon : soft intersection tolerance (pt)
+MIN_SHARED_COLS = 2     # alpha : minimum shared columns for alignment
+MIN_COLS_PER_LINE = 3   # beta : minimum columns per line
+MIN_ZONE_LINES = 3      # gamma : minimum lines to form a table
+STABLE_COL_RATIO = 0.4  # delta : minimum proportion for stable column
+MAX_VARIANCE = 50       # sigma_max : variance threshold for noise rejection
+
+# Tokens to exclude from ticker detection
+NON_TICKER_TOKENS = {
+    "USD", "EUR", "CHF", "GBP", "JPY", "CAD", "AUD", "SGD", "HKD",
+    "NOK", "SEK", "DKK", "CNY", "NZD", "PLN", "CZK",
+    "THE", "FOR", "AND", "NOT", "NOR", "BUT", "TBA", "N/A",
+    "ISIN", "SSPA", "TRUE", "FALSE", "NONE",
+}
+
+
+# =====================================================================
+# Data structures
+# =====================================================================
+
+@dataclass
+class DetectedTable:
+    """A table detected in the PDF."""
+    page: int                       # page number
+    table_type: str                 # LABEL_VALUE, DATES, UNDERLYING, DOUBLE_LV, NOISE, UNKNOWN
+    stable_columns: list            # list of x positions (sorted)
+    n_columns: int                  # number of stable columns
+    n_rows: int                     # number of lines in the zone
+    y_start: float                  # y of first line
+    y_end: float                    # y of last line
+    cells: list                     # list of rows, each row is list of cell texts
+    avg_variance: float             # average cell width variance
+    numeric_ratio: float            # ratio of cells containing digits
+    raw_lines: list                 # original Line objects
+    metadata: dict = field(default_factory=dict)  # extra info
+
+
+# =====================================================================
+# Step 1: Column signature
+# =====================================================================
+
+def _quantize(x: float) -> int:
+    """Q_b(x) = floor(x / b) * b"""
+    return int(x / BIN_SIZE) * BIN_SIZE
+
+
+def _line_signature(line) -> set:
+    """Compute the column signature S_i for a line."""
+    return set(_quantize(w.x0) for w in line.words)
+
+
+# =====================================================================
+# Step 2: Soft intersection and alignment
+# =====================================================================
+
+def _soft_intersection(s1: set, s2: set) -> set:
+    """S1 ∩_ε S2 : elements of S1 that have a match in S2 within tolerance."""
+    result = set()
+    for a in s1:
+        for b in s2:
+            if abs(a - b) <= ALIGN_TOLERANCE:
+                result.add(a)
+                break
+    return result
+
+
+def _are_aligned(sig1: set, sig2: set) -> bool:
+    """Check if two consecutive lines are aligned: C_ε >= alpha and both have >= beta columns."""
+    if len(sig1) < MIN_COLS_PER_LINE or len(sig2) < MIN_COLS_PER_LINE:
+        return False
+    shared = _soft_intersection(sig1, sig2)
+    return len(shared) >= MIN_SHARED_COLS
+
+
+# =====================================================================
+# Step 3: Zone detection
+# =====================================================================
+
+def _detect_zones(lines: list) -> list:
+    """
+    Find contiguous groups of aligned lines on the same page.
+    Returns list of zones, each zone is a list of (line, signature) tuples.
+    """
+    if not lines:
+        return []
+
+    # Compute signatures
+    line_sigs = [(line, _line_signature(line)) for line in lines]
+
+    zones = []
+    current_zone = [line_sigs[0]]
+
+    for i in range(1, len(line_sigs)):
+        line, sig = line_sigs[i]
+        prev_line, prev_sig = line_sigs[i - 1]
+
+        if (line.page == prev_line.page and _are_aligned(prev_sig, sig)):
+            current_zone.append((line, sig))
+        else:
+            if len(current_zone) >= MIN_ZONE_LINES:
+                zones.append(current_zone)
+            current_zone = [(line, sig)]
+
+    # Don't forget the last zone
+    if len(current_zone) >= MIN_ZONE_LINES:
+        zones.append(current_zone)
+
+    return zones
+
+
+# =====================================================================
+# Step 4: Stable columns
+# =====================================================================
+
+def _find_stable_columns(zone: list) -> list:
+    """
+    Find columns present in >= delta proportion of lines.
+    zone is a list of (line, signature) tuples.
+    Returns sorted list of stable column positions.
+    """
+    k = len(zone)
+    # Count how many lines each column position appears in (with tolerance)
+    all_positions = set()
+    for _, sig in zone:
+        all_positions.update(sig)
+
+    stable = []
+    for pos in all_positions:
+        count = 0
+        for _, sig in zone:
+            if any(abs(pos - s) <= ALIGN_TOLERANCE for s in sig):
+                count += 1
+        if count / k >= STABLE_COL_RATIO:
+            stable.append(pos)
+
+    # Merge positions that are too close (within tolerance)
+    stable.sort()
+    merged = []
+    for pos in stable:
+        if not merged or pos - merged[-1] > ALIGN_TOLERANCE:
+            merged.append(pos)
+        else:
+            # Keep the one with higher count (or just keep existing)
+            pass
+
+    return merged
+
+
+# =====================================================================
+# Step 5: Cell extraction
+# =====================================================================
+
+def _assign_column(x0: float, columns: list) -> int:
+    """Assign a word to its nearest column. Returns column index."""
+    best_idx = 0
+    best_dist = abs(x0 - columns[0])
+    for j in range(1, len(columns)):
+        d = abs(x0 - columns[j])
+        if d < best_dist:
+            best_dist = d
+            best_idx = j
+    return best_idx
+
+
+def _extract_cells(zone: list, columns: list) -> list:
+    """
+    Extract cell contents as a matrix.
+    Returns list of rows, each row is a list of strings (one per column).
+    """
+    n_cols = len(columns)
+    matrix = []
+
+    for line, _ in zone:
+        row = [""] * n_cols
+        # Group words by column
+        col_words = [[] for _ in range(n_cols)]
+        for w in line.words:
+            j = _assign_column(w.x0, columns)
+            col_words[j].append(w)
+        # Build cell text (words sorted by x0)
+        for j in range(n_cols):
+            words = sorted(col_words[j], key=lambda w: w.x0)
+            row[j] = " ".join(w.text for w in words)
+        matrix.append(row)
+
+    return matrix
+
+
+# =====================================================================
+# Step 6: Noise filtering (variance)
+# =====================================================================
+
+def _compute_variance(zone: list, columns: list) -> tuple:
+    """
+    Compute average cell width variance and numeric ratio.
+    Returns (avg_variance, numeric_ratio).
+    """
+    n_cols = len(columns)
+    col_widths = [[] for _ in range(n_cols)]
+    n_numeric = 0
+    n_total = 0
+
+    for line, _ in zone:
+        col_words = [[] for _ in range(n_cols)]
+        for w in line.words:
+            j = _assign_column(w.x0, columns)
+            col_words[j].append(w)
+
+        for j in range(n_cols):
+            if col_words[j]:
+                words = col_words[j]
+                width = max(w.x1 for w in words) - min(w.x0 for w in words)
+                col_widths[j].append(width)
+                # Check if cell contains digits
+                text = " ".join(w.text for w in words)
+                n_total += 1
+                if re.search(r"\d", text):
+                    n_numeric += 1
+
+    # Variance per column
+    variances = []
+    for widths in col_widths:
+        if len(widths) >= 2:
+            mean = sum(widths) / len(widths)
+            var = sum((x - mean) ** 2 for x in widths) / len(widths)
+            variances.append(var ** 0.5)  # standard deviation
+        elif len(widths) == 1:
+            variances.append(0.0)
+
+    avg_var = sum(variances) / len(variances) if variances else 0.0
+    num_ratio = n_numeric / n_total if n_total > 0 else 0.0
+
+    return avg_var, num_ratio
+
+
+# =====================================================================
+# Step 7: Type classification
+# =====================================================================
+
+def _has_ticker(cells: list) -> bool:
+    """Check if any cell contains a token that looks like a Bloomberg ticker.
+    A ticker is SYMBOL + 2-letter exchange code (e.g., GOOGL UQ, SREN SW)
+    or a known index ticker followed by a currency."""
+    full_text = " ".join(" ".join(row) for row in cells)
+    # Pattern 1: SYMBOL EXCHANGE (e.g., "GOOGL UQ", "WBD UQ", "NOVOB DC")
+    if re.search(r"\b[A-Z][A-Z0-9]{1,5}\s+[A-Z]{2}\b", full_text):
+        # Verify it's not just two random words
+        for m in re.finditer(r"\b([A-Z][A-Z0-9]{1,5})\s+([A-Z]{2})\b", full_text):
+            sym, exch = m.group(1), m.group(2)
+            if sym not in NON_TICKER_TOKENS and exch not in NON_TICKER_TOKENS:
+                return True
+    # Pattern 2: known exchange names
+    if re.search(r"\b(NASDAQ|NYSE|SIX|OMX|STOXX|XETRA|Euronext)\b", full_text):
+        return True
+    return False
+
+
+def _classify_table(n_cols: int, columns: list, avg_var: float,
+                    num_ratio: float, cells: list) -> str:
+    """
+    Classify the table type based on the decision tree.
+    """
+    # Step 0: too many columns = almost certainly a paragraph, not a table
+    if n_cols > 15:
+        return "NOISE"
+
+    # Step 1: high variance = noise
+    if avg_var > MAX_VARIANCE:
+        return "NOISE"
+
+    # Gaps between columns
+    gaps = []
+    for i in range(len(columns) - 1):
+        gaps.append(columns[i + 1] - columns[i])
+
+    # Step 2: label-value (2 columns with large gap)
+    if n_cols == 2 and len(gaps) >= 1 and gaps[0] > 80:
+        return "LABEL_VALUE"
+
+    # Step 3: double label-value (4 columns: LV | gap | LV)
+    if n_cols == 4 and len(gaps) >= 3:
+        if gaps[1] > 60 and gaps[0] < 60 and gaps[2] < 60:
+            return "DOUBLE_LV"
+
+    # Step 4: dates / autocall (3-5 numeric columns)
+    if 3 <= n_cols <= 5 and num_ratio > 0.6:
+        return "DATES"
+
+    # Step 5: underlying / multi-column data (5-15 cols with tickers)
+    if 5 <= n_cols <= 15:
+        if _has_ticker(cells):
+            return "UNDERLYING"
+        if num_ratio > 0.4:
+            return "DATA"
+
+    # Step 6: borderline
+    if n_cols >= 3 and num_ratio > 0.5:
+        return "DATES"
+
+    if n_cols == 2:
+        return "LABEL_VALUE"
+
+    return "UNKNOWN"
+
+
+# =====================================================================
+# Public API
+# =====================================================================
+
+def detect_tables(lines: list, words: list = None) -> list:
+    """
+    Detect and classify all tables in the document.
+
+    Args:
+        lines: list of Line objects from coord_extractor
+        words: list of Word objects (optional, not used currently)
+
+    Returns:
+        list of DetectedTable objects, sorted by (page, y_start)
+    """
+    logger.info(f"Table detection: {len(lines)} lines to process")
+
+    # Step 1-3: detect zones
+    zones = _detect_zones(lines)
+    logger.info(f"Found {len(zones)} candidate zones")
+
+    tables = []
+    for zone in zones:
+        # Step 4: find stable columns
+        columns = _find_stable_columns(zone)
+        if len(columns) < 2:
+            continue
+
+        # Step 5: extract cells
+        cells = _extract_cells(zone, columns)
+
+        # Step 6: compute variance and numeric ratio
+        avg_var, num_ratio = _compute_variance(zone, columns)
+
+        # Step 7: classify
+        table_type = _classify_table(
+            n_cols=len(columns),
+            columns=columns,
+            avg_var=avg_var,
+            num_ratio=num_ratio,
+            cells=cells,
+        )
+
+        # Build the result
+        first_line = zone[0][0]
+        last_line = zone[-1][0]
+
+        table = DetectedTable(
+            page=first_line.page,
+            table_type=table_type,
+            stable_columns=columns,
+            n_columns=len(columns),
+            n_rows=len(zone),
+            y_start=first_line.y,
+            y_end=last_line.y,
+            cells=cells,
+            avg_variance=avg_var,
+            numeric_ratio=num_ratio,
+            raw_lines=[line for line, _ in zone],
+            metadata={
+                "width": max(w.x1 for line in [l for l, _ in zone] for w in line.words)
+                         - min(w.x0 for line in [l for l, _ in zone] for w in line.words),
+            },
+        )
+        tables.append(table)
+
+    # Sort by page then y
+    tables.sort(key=lambda t: (t.page, t.y_start))
+
+    # Log summary
+    type_counts = {}
+    for t in tables:
+        type_counts[t.table_type] = type_counts.get(t.table_type, 0) + 1
+    logger.info(f"Detected {len(tables)} tables: {type_counts}")
+
+    return tables
+
+
+def print_table(table: DetectedTable, max_rows: int = 10, max_cell_width: int = 25):
+    """Pretty-print a detected table for exploration."""
+    print(f"\n{'─' * 80}")
+    print(f"  Type: {table.table_type}  |  Page {table.page}  |  "
+          f"{table.n_rows} rows × {table.n_columns} cols  |  "
+          f"σ={table.avg_variance:.1f}  r_num={table.numeric_ratio:.2f}")
+    print(f"  Columns at: {table.stable_columns}")
+    print(f"  Y range: {table.y_start:.1f} → {table.y_end:.1f}")
+    print(f"{'─' * 80}")
+
+    for i, row in enumerate(table.cells[:max_rows]):
+        truncated = [cell[:max_cell_width].ljust(max_cell_width) for cell in row]
+        print(f"  {'│'.join(truncated)}")
+
+    if len(table.cells) > max_rows:
+        print(f"  ... +{len(table.cells) - max_rows} rows")
+    print()
