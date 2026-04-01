@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+# explore_tables.py
+#
+# Exploration script for the table detection algorithm.
+# Runs on all PDFs in data/input/ and displays detected tables.
+#
+# Usage:
+#   python explore_tables.py
+#   python explore_tables.py --input path/to/pdfs
+#   python explore_tables.py --type UNDERLYING      # filter by type
+#   python explore_tables.py --page 0               # filter by page
+#   python explore_tables.py --verbose               # show all rows
+#   python explore_tables.py --stats                 # summary only
+#   python explore_tables.py --export tables.csv     # export to CSV
+
+import argparse
+import csv
+import logging
+import sys
+from pathlib import Path
+
+import config
+from modules.coord_extractor import extract_from_pdf
+from modules.table_detector import detect_tables, print_table
+
+
+def setup_logging(verbose=False):
+    level = logging.DEBUG if verbose else logging.WARNING
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        stream=sys.stdout,
+    )
+
+
+def process_pdf(pdf_path, args):
+    """Process a single PDF and return detected tables."""
+    result = extract_from_pdf(str(pdf_path))
+    tables = detect_tables(result.lines, result.words)
+
+    # Filter by type
+    if args.type:
+        tables = [t for t in tables if t.table_type == args.type.upper()]
+
+    # Filter by page
+    if args.page is not None:
+        tables = [t for t in tables if t.page == args.page]
+
+    # Filter out noise
+    if args.no_noise:
+        tables = [t for t in tables if t.table_type not in ("NOISE", "UNKNOWN")]
+
+    return tables, result
+
+
+def print_stats(all_results: dict):
+    """Print summary statistics across all PDFs."""
+    print(f"\n{'=' * 80}")
+    print(f"  SUMMARY")
+    print(f"{'=' * 80}\n")
+
+    total_tables = 0
+    type_counts = {}
+    type_by_pdf = {}
+
+    for pdf_name, tables in all_results.items():
+        total_tables += len(tables)
+        for t in tables:
+            type_counts[t.table_type] = type_counts.get(t.table_type, 0) + 1
+            if pdf_name not in type_by_pdf:
+                type_by_pdf[pdf_name] = {}
+            type_by_pdf[pdf_name][t.table_type] = type_by_pdf[pdf_name].get(t.table_type, 0) + 1
+
+    print(f"  PDFs processed: {len(all_results)}")
+    print(f"  Total tables detected: {total_tables}\n")
+
+    print(f"  {'Type':<20s} {'Count':>6s} {'%':>8s}")
+    print(f"  {'-' * 36}")
+    for ttype in sorted(type_counts.keys()):
+        count = type_counts[ttype]
+        pct = count / total_tables * 100 if total_tables else 0
+        bar = "#" * int(pct / 3)
+        print(f"  {ttype:<20s} {count:>6d} {pct:>7.1f}%  {bar}")
+
+    print(f"\n  Per PDF:")
+    print(f"  {'-' * 70}")
+    for pdf_name in sorted(type_by_pdf.keys()):
+        types = type_by_pdf[pdf_name]
+        types_str = ", ".join(f"{k}={v}" for k, v in sorted(types.items()))
+        print(f"  {pdf_name[:45]:<45s}  {types_str}")
+
+    # Column statistics
+    print(f"\n  Column distribution:")
+    print(f"  {'-' * 36}")
+    col_counts = {}
+    for tables in all_results.values():
+        for t in tables:
+            col_counts[t.n_columns] = col_counts.get(t.n_columns, 0) + 1
+    for n_cols in sorted(col_counts.keys()):
+        print(f"  {n_cols:>3d} columns: {col_counts[n_cols]:>4d} tables")
+
+
+def export_csv(all_results: dict, output_path: str):
+    """Export all detected tables to a CSV file."""
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            "pdf_file", "page", "table_type", "n_rows", "n_columns",
+            "y_start", "y_end", "avg_variance", "numeric_ratio",
+            "stable_columns", "first_row",
+        ])
+        for pdf_name, tables in sorted(all_results.items()):
+            for t in tables:
+                first_row = " | ".join(t.cells[0]) if t.cells else ""
+                writer.writerow([
+                    pdf_name, t.page, t.table_type, t.n_rows, t.n_columns,
+                    f"{t.y_start:.1f}", f"{t.y_end:.1f}",
+                    f"{t.avg_variance:.1f}", f"{t.numeric_ratio:.2f}",
+                    str(t.stable_columns), first_row[:200],
+                ])
+    print(f"\n  Exported to {output_path}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Table Detection Explorer")
+    parser.add_argument("--input", "-i", type=str, default=str(config.INPUT_DIR),
+                        help="Input folder with PDFs")
+    parser.add_argument("--type", "-t", type=str, default=None,
+                        help="Filter by table type (LABEL_VALUE, DATES, UNDERLYING, etc.)")
+    parser.add_argument("--page", "-p", type=int, default=None,
+                        help="Filter by page number")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Show all rows (default: max 10)")
+    parser.add_argument("--stats", "-s", action="store_true",
+                        help="Show summary statistics only")
+    parser.add_argument("--export", "-e", type=str, default=None,
+                        help="Export results to CSV")
+    parser.add_argument("--max-rows", type=int, default=10,
+                        help="Max rows to display per table (default: 10)")
+    parser.add_argument("--no-noise", "-n", action="store_true",
+                        help="Hide NOISE and UNKNOWN tables")
+    args = parser.parse_args()
+
+    setup_logging(args.verbose)
+
+    input_dir = Path(args.input)
+    pdf_files = sorted(f for f in input_dir.iterdir() if f.suffix.lower() == ".pdf")
+
+    if not pdf_files:
+        print(f"No PDFs found in {input_dir}")
+        return
+
+    print(f"\nProcessing {len(pdf_files)} PDF(s) from {input_dir}\n")
+
+    all_results = {}
+    max_rows = 999 if args.verbose else args.max_rows
+
+    for pdf_file in pdf_files:
+        print(f"{'=' * 80}")
+        print(f"  {pdf_file.name}")
+        print(f"{'=' * 80}")
+
+        try:
+            tables, result = process_pdf(pdf_file, args)
+            all_results[pdf_file.name] = tables
+
+            if not args.stats:
+                if not tables:
+                    print("  No tables detected (with current filters)\n")
+                for table in tables:
+                    print_table(table, max_rows=max_rows)
+            else:
+                n_by_type = {}
+                for t in tables:
+                    n_by_type[t.table_type] = n_by_type.get(t.table_type, 0) + 1
+                types_str = ", ".join(f"{k}={v}" for k, v in sorted(n_by_type.items()))
+                print(f"  {len(tables)} tables: {types_str}\n")
+
+        except Exception as e:
+            print(f"  ERROR: {e}\n")
+            all_results[pdf_file.name] = []
+
+    # Summary
+    print_stats(all_results)
+
+    # Export
+    if args.export:
+        export_csv(all_results, args.export)
+
+
+if __name__ == "__main__":
+    main()
