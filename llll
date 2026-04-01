@@ -1,0 +1,441 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{booktabs}
+
+\geometry{margin=2.5cm}
+
+\newtheorem{definition}{D\'efinition}
+\newtheorem{propriete}{Propri\'et\'e}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries Formalisation Math\'ematique}\\[6pt]
+{\Large D\'etection de Tableaux par Clustering Spatial}\\[12pt]
+{\normalsize Nasser Kassioui --- Mars 2026}
+\end{center}
+
+\bigskip
+\hrule
+\bigskip
+
+\tableofcontents
+
+\newpage
+
+%% ============================================================================
+\section{Espace de travail et notations}
+%% ============================================================================
+
+\subsection{Le mot}
+
+Un mot $w$ est un \'el\'ement atomique extrait du PDF. Il est d\'efini par le quintuplet :
+
+$$w = (t, x_0, y_0, x_1, y_1, p)$$
+
+o\`u :
+\begin{itemize}
+  \item $t \in \Sigma^*$ est la cha\^ine de caract\`eres (le texte du mot)
+  \item $x_0 \in \mathbb{R}^+$ est l'abscisse du bord gauche du mot (en points)
+  \item $y_0 \in \mathbb{R}^+$ est l'ordonn\'ee du bord sup\'erieur du mot
+  \item $x_1 \in \mathbb{R}^+$ est l'abscisse du bord droit ($x_1 > x_0$)
+  \item $y_1 \in \mathbb{R}^+$ est l'ordonn\'ee du bord inf\'erieur ($y_1 > y_0$)
+  \item $p \in \mathbb{N}$ est le num\'ero de page (index\'e \`a partir de 0)
+\end{itemize}
+
+On note $\mathcal{W} = \{w_1, w_2, \ldots, w_N\}$ l'ensemble de tous les mots du document, avec $N = |\mathcal{W}|$.
+
+\subsection{La ligne}
+
+Une ligne $l$ est un sous-ensemble ordonn\'e de mots partageant approximativement la m\^eme ordonn\'ee. Formellement :
+
+\begin{definition}[Ligne]
+Soit $\tau_y > 0$ un seuil de proximit\'e verticale. Les mots $\mathcal{W}$ sont partitionn\'es en lignes $\{l_1, l_2, \ldots, l_L\}$ telles que :
+
+$$\forall\, w_a, w_b \in l_i : \quad |y_0(w_a) - y_0(w_b)| \leq \tau_y \quad \text{et} \quad p(w_a) = p(w_b)$$
+
+Les mots au sein d'une ligne sont ordonn\'es par abscisse croissante :
+
+$$w_a \prec w_b \iff x_0(w_a) < x_0(w_b)$$
+\end{definition}
+
+Param\`etre : $\tau_y = 3.0$ pt.
+
+On note $L$ le nombre total de lignes et $\mathcal{L} = \{l_1, l_2, \ldots, l_L\}$ l'ensemble ordonn\'e des lignes (tri\'ees par page puis par ordonn\'ee croissante).
+
+Pour chaque ligne $l_i$, on d\'efinit :
+\begin{itemize}
+  \item $n_i = |l_i|$ le nombre de mots dans la ligne
+  \item $\bar{y}_i = \frac{1}{n_i} \sum_{w \in l_i} y_0(w)$ l'ordonn\'ee moyenne
+  \item $p_i$ le num\'ero de page
+\end{itemize}
+
+
+%% ============================================================================
+\section{Signature de colonne}
+%% ============================================================================
+
+\subsection{Quantification des positions}
+
+\begin{definition}[Fonction de quantification]
+Soit $b > 0$ la r\'esolution du bin (en points). La fonction de quantification est :
+
+$$Q_b : \mathbb{R}^+ \to \mathbb{N}, \quad Q_b(x) = \left\lfloor \frac{x}{b} \right\rfloor \cdot b$$
+\end{definition}
+
+Param\`etre : $b = 5$ pt.
+
+Exemples :
+\begin{itemize}
+  \item $Q_5(36.2) = 35$
+  \item $Q_5(142.8) = 140$
+  \item $Q_5(263.1) = 260$
+\end{itemize}
+
+\subsection{Signature d'une ligne}
+
+\begin{definition}[Signature de colonne]
+La signature de colonne de la ligne $l_i$ est l'ensemble :
+
+$$S_i = \left\{ Q_b\big(x_0(w)\big) \;\;\middle|\;\; w \in l_i \right\}$$
+\end{definition}
+
+$S_i$ est un ensemble (pas de doublons) d'entiers multiples de $b$. On note $m_i = |S_i|$ le nombre de positions distinctes (le nombre apparent de ``colonnes'' dans cette ligne).
+
+Exemple : si la ligne $l_i$ contient des mots aux positions $x_0 \in \{36, 38, 145, 147, 263, 380\}$, alors :
+
+$$S_i = \{35, 145, 260, 380\}, \quad m_i = 4$$
+
+
+%% ============================================================================
+\section{Mesure de similarit\'e entre lignes}
+%% ============================================================================
+
+\subsection{Intersection et cardinalit\'e}
+
+\begin{definition}[Chevauchement de colonnes]
+Le chevauchement entre deux lignes cons\'ecutives $l_i$ et $l_{i+1}$ est :
+
+$$C(i, i+1) = |S_i \cap S_{i+1}|$$
+\end{definition}
+
+C'est le nombre de positions de colonnes communes entre les deux lignes.
+
+\subsection{Coefficient de Jaccard}
+
+\begin{definition}[Similarit\'e de Jaccard]
+$$J(i, i+1) = \frac{|S_i \cap S_{i+1}|}{|S_i \cup S_{i+1}|}$$
+\end{definition}
+
+$J \in [0, 1]$. $J = 1$ signifie que les deux lignes ont exactement les m\^emes colonnes. $J = 0$ signifie aucune colonne commune.
+
+\subsection{Intersection souple}
+
+L'intersection ensembliste stricte ($S_i \cap S_{i+1}$) est trop rigide. Un mot \`a $x_0 = 143$ n'est pas consid\'er\'e align\'e avec une colonne \`a $x = 145$ alors qu'il l'est visuellement.
+
+\begin{definition}[Intersection souple]
+Soit $\epsilon > 0$ une tol\'erance d'alignement. L'intersection souple est :
+
+$$S_i \cap_\epsilon S_{i+1} = \left\{ s \in S_i \;\;\middle|\;\; \exists\, s' \in S_{i+1},\; |s - s'| \leq \epsilon \right\}$$
+\end{definition}
+
+Param\`etre : $\epsilon = 8$ pt.
+
+Le chevauchement souple est alors :
+
+$$C_\epsilon(i, i+1) = |S_i \cap_\epsilon S_{i+1}|$$
+
+\subsection{Condition d'alignement}
+
+\begin{definition}[Lignes align\'ees]
+Deux lignes cons\'ecutives $l_i$ et $l_{i+1}$ sur la m\^eme page sont dites \emph{align\'ees} si :
+
+$$\mathcal{A}(i, i+1) \iff C_\epsilon(i, i+1) \geq \alpha \quad \text{et} \quad m_i \geq \beta \quad \text{et} \quad m_{i+1} \geq \beta$$
+\end{definition}
+
+Param\`etres :
+\begin{itemize}
+  \item $\alpha = 2$ : nombre minimum de colonnes partag\'ees
+  \item $\beta = 3$ : nombre minimum de colonnes par ligne
+\end{itemize}
+
+
+%% ============================================================================
+\section{D\'etection de zones tabulaires}
+%% ============================================================================
+
+\subsection{Zone tabulaire}
+
+\begin{definition}[Zone tabulaire]
+Une zone tabulaire $Z$ est une sous-s\'equence maximale de lignes cons\'ecutives mutuellement align\'ees :
+
+$$Z = (l_a, l_{a+1}, \ldots, l_{a+k-1})$$
+
+telle que :
+\begin{enumerate}
+  \item $\forall\, j \in [a, a+k-2] : \mathcal{A}(j, j+1) = \text{vrai}$
+  \item $k \geq \gamma$ (longueur minimale)
+  \item $p_j = p_a$ pour tout $j$ (m\^eme page)
+\end{enumerate}
+\end{definition}
+
+Param\`etre : $\gamma = 3$ (au moins 3 lignes pour constituer un tableau).
+
+On note $\mathcal{Z} = \{Z_1, Z_2, \ldots, Z_T\}$ l'ensemble des zones tabulaires d\'etect\'ees, avec $T = |\mathcal{Z}|$.
+
+\subsection{Colonnes stables d'une zone}
+
+\begin{definition}[Colonnes stables]
+Les colonnes stables d'une zone $Z = (l_a, \ldots, l_{a+k-1})$ sont les positions pr\'esentes dans une proportion suffisante des lignes :
+
+$$R(Z) = \left\{ c \in \bigcup_{j=a}^{a+k-1} S_j \;\;\middle|\;\; \frac{|\{j : c \in_\epsilon S_j\}|}{k} \geq \delta \right\}$$
+
+o\`u $c \in_\epsilon S_j$ signifie $\exists\, s \in S_j,\; |c - s| \leq \epsilon$.
+\end{definition}
+
+Param\`etre : $\delta = 0.4$ (une colonne doit \^etre pr\'esente dans au moins 40\% des lignes de la zone).
+
+On note $M = |R(Z)|$ le nombre de colonnes stables.
+
+\subsection{Algorithme de d\'etection}
+
+\begin{algorithm}[H]
+\caption{D\'etection de zones tabulaires}
+\begin{algorithmic}[1]
+\REQUIRE Lignes $\mathcal{L} = \{l_1, \ldots, l_L\}$, param\`etres $\alpha, \beta, \gamma, \epsilon$
+\ENSURE Zones tabulaires $\mathcal{Z}$
+\STATE $\mathcal{Z} \leftarrow \emptyset$
+\STATE $G \leftarrow [l_1]$ \COMMENT{groupe courant}
+\FOR{$i = 2$ \TO $L$}
+    \IF{$p_i = p_{i-1}$ \AND $\mathcal{A}(i-1, i)$}
+        \STATE $G \leftarrow G \cup \{l_i\}$
+    \ELSE
+        \IF{$|G| \geq \gamma$}
+            \STATE $\mathcal{Z} \leftarrow \mathcal{Z} \cup \{G\}$
+        \ENDIF
+        \STATE $G \leftarrow [l_i]$
+    \ENDIF
+\ENDFOR
+\IF{$|G| \geq \gamma$}
+    \STATE $\mathcal{Z} \leftarrow \mathcal{Z} \cup \{G\}$
+\ENDIF
+\RETURN $\mathcal{Z}$
+\end{algorithmic}
+\end{algorithm}
+
+
+%% ============================================================================
+\section{Filtrage du bruit}
+%% ============================================================================
+
+Un paragraphe de texte justifi\'e \`a gauche peut \^etre faussement d\'etect\'e comme tableau car ses mots commencent \`a des positions r\'ep\'etitives (marge gauche). Il faut un crit\`ere discriminant.
+
+\subsection{Variance de largeur de cellule}
+
+Pour chaque colonne stable $c_j \in R(Z)$, on d\'efinit la largeur de cellule comme la distance entre le d\'ebut du premier mot et la fin du dernier mot assign\'e \`a cette colonne sur une ligne donn\'ee.
+
+\begin{definition}[Assignation d'un mot \`a une colonne]
+Le mot $w$ est assign\'e \`a la colonne :
+
+$$\text{col}(w) = \underset{c_j \in R(Z)}{\arg\min}\; |x_0(w) - c_j|$$
+\end{definition}
+
+\begin{definition}[Largeur de cellule]
+Sur la ligne $l_i$, la largeur de la cellule de la colonne $c_j$ est :
+
+$$\Delta_{i,j} = \max_{w \in l_i,\, \text{col}(w) = c_j} x_1(w) - \min_{w \in l_i,\, \text{col}(w) = c_j} x_0(w)$$
+
+Si aucun mot n'est assign\'e \`a $c_j$ sur $l_i$, on pose $\Delta_{i,j} = \text{NaN}$.
+\end{definition}
+
+\begin{definition}[Variance de colonne]
+La variance de largeur de la colonne $c_j$ sur la zone $Z$ est :
+
+$$\sigma_j^2 = \text{Var}\left(\{\Delta_{i,j} \;\;|\;\; i \in Z,\; \Delta_{i,j} \neq \text{NaN}\}\right)$$
+\end{definition}
+
+\begin{propriete}[Crit\`ere de discrimination]
+\begin{itemize}
+  \item \textbf{Vrai tableau} : $\sigma_j$ faible (cellules de taille r\'eguli\`ere). Typiquement $\sigma_j < 30$ pt pour les colonnes de chiffres, dates, tickers.
+  \item \textbf{Paragraphe} : $\sigma_j$ \'elev\'ee (mots de longueurs tr\`es variables). Typiquement $\sigma_j > 50$ pt.
+\end{itemize}
+\end{propriete}
+
+\subsection{Variance moyenne de la zone}
+
+\begin{definition}[Variance moyenne]
+$$\bar{\sigma}(Z) = \frac{1}{M} \sum_{j=1}^{M} \sigma_j$$
+\end{definition}
+
+Seuil de rejet : si $\bar{\sigma}(Z) > \sigma_{\max}$, la zone est classifi\'ee comme bruit.
+
+Param\`etre : $\sigma_{\max} = 50$ pt.
+
+\subsection{Ratio de contenu num\'erique}
+
+\begin{definition}[Ratio num\'erique]
+Soit $n_{\text{num}}$ le nombre de cellules contenant au moins un chiffre, et $n_{\text{tot}}$ le nombre total de cellules non vides dans la zone $Z$ :
+
+$$r_{\text{num}}(Z) = \frac{n_{\text{num}}}{n_{\text{tot}}}$$
+\end{definition}
+
+Un $r_{\text{num}}$ \'elev\'e indique un tableau de donn\'ees (dates, prix, pourcentages) plut\^ot qu'un bloc de texte.
+
+
+%% ============================================================================
+\section{Classification du type de tableau}
+%% ============================================================================
+
+Soit une zone tabulaire $Z$ avec $M = |R(Z)|$ colonnes stables, class\'ee par abscisse croissante $c_1 < c_2 < \ldots < c_M$.
+
+\begin{definition}[Largeur de la zone]
+$$W(Z) = \max_{w \in Z} x_1(w) - \min_{w \in Z} x_0(w)$$
+\end{definition}
+
+\begin{definition}[\'Ecart inter-colonnes]
+$$g_{j} = c_{j+1} - c_j, \quad j = 1, \ldots, M-1$$
+\end{definition}
+
+\subsection{R\`egles de classification}
+
+$$\text{type}(Z) = \begin{cases}
+\text{LABEL-VALEUR} & \text{si } M = 2 \text{ et } g_1 > 80 \\[4pt]
+\text{DOUBLE LABEL-VALEUR} & \text{si } M = 4 \text{ et } g_2 > 60 \\[4pt]
+\text{DATES / AUTOCALL} & \text{si } M \in [3, 5] \text{ et } r_{\text{num}} > 0.6 \\[4pt]
+\text{UNDERLYING} & \text{si } M \geq 5 \text{ et } \exists\, \text{ticker} \\[4pt]
+\text{BRUIT} & \text{si } M \leq 2 \text{ et } \bar{\sigma} > \sigma_{\max} \\[4pt]
+\text{IND\'ETERMIN\'E} & \text{sinon}
+\end{cases}$$
+
+o\`u la condition ``$\exists\, \text{ticker}$'' signifie qu'au moins une cellule contient un token de la forme $[A-Z]\{2,6\}$ non pr\'esent dans une liste d'exclusion (USD, EUR, CHF, \ldots).
+
+\subsection{Arbre de d\'ecision formel}
+
+\begin{enumerate}
+  \item Si $\bar{\sigma}(Z) > \sigma_{\max}$ : BRUIT. Fin.
+  \item Si $M = 2$ et $g_1 > 80$ : LABEL-VALEUR. Fin.
+  \item Si $M = 4$ et $g_2 > 60$ et $g_1 < 60$ et $g_3 < 60$ : DOUBLE LABEL-VALEUR. Fin.
+  \item Si $M \in [3, 5]$ et $r_{\text{num}} > 0.6$ : DATES / AUTOCALL. Fin.
+  \item Si $M \geq 5$ : UNDERLYING (ou DATA). Fin.
+  \item Sinon : IND\'ETERMIN\'E.
+\end{enumerate}
+
+
+%% ============================================================================
+\section{Extraction des cellules}
+%% ============================================================================
+
+Une fois la zone $Z$ d\'etect\'ee et ses colonnes stables $R(Z) = \{c_1, \ldots, c_M\}$ identifi\'ees, on extrait le contenu de chaque cellule.
+
+\subsection{Assignation des mots}
+
+Pour chaque mot $w$ de la ligne $l_i \in Z$ :
+
+$$\text{col}(w) = \underset{j \in \{1, \ldots, M\}}{\arg\min}\; |x_0(w) - c_j|$$
+
+\subsection{Contenu de la cellule}
+
+\begin{definition}[Cellule]
+La cellule $(i, j)$ est l'ensemble des mots de la ligne $l_i$ assign\'es \`a la colonne $c_j$ :
+
+$$\text{cell}(i, j) = \{w \in l_i \;|\; \text{col}(w) = j\}$$
+
+Le texte de la cellule est la concat\'enation des textes des mots, ordonn\'es par $x_0$ :
+
+$$\text{text}(i, j) = \bigoplus_{w \in \text{cell}(i,j)} t(w)$$
+
+o\`u $\oplus$ d\'enote la concat\'enation avec espace.
+\end{definition}
+
+\subsection{Repr\'esentation matricielle}
+
+Le tableau extrait est une matrice $\mathbf{T} \in (\Sigma^*)^{k \times M}$ :
+
+$$\mathbf{T}_{i,j} = \text{text}(a + i - 1,\; j), \quad i = 1, \ldots, k, \quad j = 1, \ldots, M$$
+
+o\`u $k$ est le nombre de lignes de la zone et $a$ l'indice de la premi\`ere ligne.
+
+
+%% ============================================================================
+\section{R\'ecapitulatif des param\`etres}
+%% ============================================================================
+
+\begin{table}[h]
+\centering
+\begin{tabular}{clcl}
+\toprule
+\textbf{Symbole} & \textbf{Nom} & \textbf{Valeur} & \textbf{R\^ole} \\
+\midrule
+$\tau_y$ & Seuil de proximit\'e Y & 3.0 pt & Regroupement en lignes \\
+$b$ & R\'esolution du bin & 5 pt & Quantification des $x_0$ \\
+$\epsilon$ & Tol\'erance d'alignement & 8 pt & Intersection souple \\
+$\alpha$ & Colonnes partag\'ees min. & 2 & Condition d'alignement \\
+$\beta$ & Colonnes par ligne min. & 3 & Condition d'alignement \\
+$\gamma$ & Lignes min. par zone & 3 & Longueur min. d'un tableau \\
+$\delta$ & Proportion min. colonne & 0.4 & Stabilit\'e d'une colonne \\
+$\sigma_{\max}$ & Variance max. & 50 pt & Seuil de rejet bruit \\
+\bottomrule
+\end{tabular}
+\caption{Param\`etres de l'algorithme}
+\end{table}
+
+
+%% ============================================================================
+\section{Complexit\'e}
+%% ============================================================================
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{\'Etape} & \textbf{Op\'eration} & \textbf{Complexit\'e} \\
+\midrule
+Signatures & Quantification de chaque $x_0$ & $O(N)$ \\
+Similarit\'e & Intersection souple entre lignes & $O(L \cdot \bar{m}^2)$ \\
+Zones & Parcours s\'equentiel & $O(L)$ \\
+Colonnes stables & Comptage par position & $O(L \cdot \bar{m})$ \\
+Filtrage & Variance par colonne & $O(N)$ \\
+Classification & R\`egles fixes & $O(T)$ \\
+Extraction & Assignation + concat\'enation & $O(N)$ \\
+\midrule
+\textbf{Total} & & $O(N + L \cdot \bar{m}^2)$ \\
+\bottomrule
+\end{tabular}
+\caption{Complexit\'e par \'etape. $N$ = nombre de mots, $L$ = nombre de lignes, $\bar{m}$ = nombre moyen de colonnes par ligne, $T$ = nombre de zones.}
+\end{table}
+
+En pratique, $\bar{m} \leq 10$ et $L \ll N$, donc la complexit\'e est lin\'eaire en $N$.
+
+
+%% ============================================================================
+\section{Propri\'et\'es}
+%% ============================================================================
+
+\begin{propriete}[Compl\'etude]
+Toute s\'equence de $\gamma$ lignes ou plus ayant $\alpha$ colonnes align\'ees en commun est d\'etect\'ee comme zone tabulaire. Aucun tableau r\'eel n'est manqu\'e si $\gamma$, $\alpha$ et $\epsilon$ sont correctement calibr\'es.
+\end{propriete}
+
+\begin{propriete}[S\'eparabilit\'e]
+Un paragraphe de texte justifi\'e \`a gauche a typiquement $M \leq 2$ colonnes stables (marge gauche + \'eventuel retrait) et $\bar{\sigma} > 50$ pt. Le crit\`ere $M \geq 3$ et/ou $\bar{\sigma} < \sigma_{\max}$ le rejette.
+\end{propriete}
+
+\begin{propriete}[Invariance au nombre de pages]
+L'algorithme traite chaque page ind\'ependamment (condition $p_i = p_{i-1}$ dans l'alignement). Un tableau ne peut pas s'\'etendre sur deux pages.
+\end{propriete}
+
+\begin{propriete}[Sensibilit\'e au param\`etre $b$]
+Si $b$ est trop petit ($b < 3$), des mots l\'eg\`erement d\'ecal\'es cr\'eent des colonnes distinctes. Si $b$ est trop grand ($b > 10$), des colonnes proches sont fusionn\'ees. La valeur $b = 5$ est un compromis pour les PDFs financiers o\`u les colonnes sont espac\'ees de 20--100 pt.
+\end{propriete}
+
+
+\vfill
+\begin{flushright}
+\textit{Nasser Kassioui --- Mars 2026}
+\end{flushright}
+
+\end{document}
